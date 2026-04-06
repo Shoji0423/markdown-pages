@@ -75,7 +75,7 @@ jobs:
             const heading = cat === '(root)' ? 'General' : cat;
             items += `<h2>📂 ${heading}</h2><ul>`;
             for (const p of pages) {
-              items += `<li><a href="${p}">📌 ${p.label}</a></li>`;
+              items += `<li><a href="${p.href}">📌 ${p.label}</a></li>`;
             }
             items += '</ul>';
           }
