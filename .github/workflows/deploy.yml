@@ -1,0 +1,110 @@
+name: Deploy Mindmaps
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'maps/**'
+      - '.github/workflows/deploy.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install markmap-cli
+        run: npm install -g markmap-cli
+
+      - name: Build HTML files
+        run: |
+          # maps/ 以下の全 .md を再帰的に処理
+          find maps -name "*.md" | while read f; do
+            # maps/work/project-a.md -> work/project-a
+            rel="${f#maps/}"
+            name="${rel%.md}"
+            outdir="dist/$(dirname "$name")"
+            mkdir -p "$outdir"
+            markmap "$f" --no-open -o "dist/${name}.html"
+            echo "Built: dist/${name}.html"
+          done
+
+      - name: Generate index page
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+
+          // dist/ 以下の .html を再帰収集（index.html除く）
+          function collectHtml(dir, base = dir) {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            let files = [];
+            for (const e of entries) {
+              const full = path.join(dir, e.name);
+              if (e.isDirectory()) {
+                files = files.concat(collectHtml(full, base));
+              } else if (e.isFile() && e.name.endsWith('.html') && e.name !== 'index.html') {
+                files.push(path.relative(base, full));
+              }
+            }
+            return files;
+          }
+
+          const files = collectHtml('dist').sort();
+
+          // カテゴリ（サブディレクトリ）ごとにグループ化
+          const groups = {};
+          for (const f of files) {
+            const parts = f.split('/');
+            const category = parts.length > 1 ? parts[0] : '(root)';
+            const label = parts[parts.length - 1].replace('.html', '');
+            if (!groups[category]) groups[category] = [];
+            groups[category].push({ href: f, label });
+          }
+
+          // index.html 生成
+          let items = '';
+          for (const [cat, pages] of Object.entries(groups)) {
+            const heading = cat === '(root)' ? 'General' : cat;
+            items += `<h2>📂 ${heading}</h2><ul>`;
+            for (const p of pages) {
+              items += `<li><a href="${p}">📌 ${p.label}</a></li>`;
+            }
+            items += '</ul>';
+          }
+
+          const html = `<!DOCTYPE html>
+          <html lang="ja">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Mindmap Index</title>
+            <style>
+              body { font-family: sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; }
+              h1 { border-bottom: 2px solid #eee; padding-bottom: 8px; }
+              h2 { margin-top: 28px; color: #444; font-size: 1rem; text-transform: uppercase; letter-spacing: 0.05em; }
+              ul { list-style: none; padding: 0; }
+              li { margin: 10px 0; }
+              a { text-decoration: none; color: #0969da; font-size: 1.05rem; }
+              a:hover { text-decoration: underline; }
+            </style>
+          </head>
+          <body>
+            <h1>🧠 Mindmaps</h1>
+            ${items}
+          </body>
+          </html>`;
+
+          fs.writeFileSync('dist/index.html', html);
+          console.log('index.html generated');
+          EOF
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
